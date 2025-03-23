@@ -1,147 +1,175 @@
 import cv2
 import numpy as np
 
-class ImageMasker:
-    def __init__(self):
-        self.all_points = []     # 所有标注区域
-        self.current_points = [] # 当前区域点
-        self.img_orig = None     # 原始图像
-        self.scale = 1.0         # 缩放比例
-        self.drawing = False     # 标注状态
+# 全局变量
+all_points = []     # 存储所有区域的坐标点
+current_points = [] # 当前正在标注的区域点
+img_orig = None     # 原始图像
+scale = 1.0         # 图像缩放比例
+drawing_mode = True # 标注模式状态
 
-    def _click_event(self, event, x_display, y_display, flags, param):
-        """ 鼠标事件回调 """
-        if event == cv2.EVENT_LBUTTONDOWN and len(self.current_points) < 4:
-            x_orig = int(x_display / self.scale)
-            y_orig = int(y_display / self.scale)
-            self.current_points.append((x_orig, y_orig))
-            self._update_display()
+def click_event(event, x_display, y_display, flags, param):
+    """ 鼠标回调函数，处理点击事件 """
+    global current_points, img_orig, scale, drawing_mode
+    
+    if not drawing_mode:
+        return
+    
+    if event == cv2.EVENT_LBUTTONDOWN and len(current_points) < 4:
+        # 转换坐标到原图尺寸
+        x_orig = int(x_display / scale)
+        y_orig = int(y_display / scale)
+        current_points.append((x_orig, y_orig))
+        
+        # 更新显示图像
+        update_display()
 
-    def _update_display(self):
-        """ 更新显示画面 """
-        display_img = cv2.resize(self.img_orig.copy(), 
-                               (int(self.img_orig.shape[1]*self.scale), 
-                                int(self.img_orig.shape[0]*self.scale)))
-        
-        # 绘制历史区域
-        for points in self.all_points:
-            self._draw_polygon(display_img, points, (0, 255, 0))
-        
-        # 绘制当前区域
-        if self.current_points:
-            self._draw_polygon(display_img, self.current_points, (0, 0, 255))
-        
-        cv2.imshow('Mask Tool', display_img)
-
-    def _draw_polygon(self, img, points, color):
-        """ 绘制多边形辅助线 """
-        pts_display = [(int(x*self.scale), int(y*self.scale)) for (x,y) in points]
-        for i, (x, y) in enumerate(pts_display):
-            cv2.circle(img, (x, y), 5, color, -1)
+def update_display():
+    """ 更新显示图像 """
+    display_h = int(img_orig.shape[0] * scale)
+    display_w = int(img_orig.shape[1] * scale)
+    img_display = cv2.resize(img_orig.copy(), (display_w, display_h))
+    
+    # 绘制所有已完成的区域
+    for points in all_points:
+        # 绘制点
+        for i, (x, y) in enumerate(points):
+            x_disp = int(x * scale)
+            y_disp = int(y * scale)
+            cv2.circle(img_display, (x_disp, y_disp), 5, (0, 0, 255), -1)
             if i > 0:
-                cv2.line(img, pts_display[i-1], (x, y), color, 2)
+                x_prev = int(points[i-1][0] * scale)
+                y_prev = int(points[i-1][1] * scale)
+                cv2.line(img_display, (x_prev, y_prev), (x_disp, y_disp), (0, 255, 0), 2)
+        
+        # 绘制闭合框
         if len(points) == 4:
-            cv2.polylines(img, [np.array(pts_display, np.int32)], True, color, 2)
-
-    def process_image(self, image_path):
-        """
-        处理主函数
-        :param image_path: 输入图像路径
-        :return: (处理后的图像, 归一化boxes列表)
-        """
-        # 初始化状态
-        self.__init__() 
-        
-        # 读取图像
-        self.img_orig = cv2.imread(image_path)
-        if self.img_orig is None:
-            raise FileNotFoundError(f"无法加载图像: {image_path}")
-        
-        # 设置窗口
-        h, w = self.img_orig.shape[:2]
-        self.scale = min(800/w, 800/h)
-        cv2.namedWindow('Mask Tool')
-        cv2.setMouseCallback('Mask Tool', self._click_event)
-        self._update_display()
-
-        # 主交互循环
-        while True:
-            key = cv2.waitKey(20)
-            
-            # ESC键结束标注
-            if key == 27: 
-                break
-            
-            # 回车确认当前区域
-            if key == 13 and len(self.current_points) == 4:
-                self.all_points.append(self.current_points)
-                self.current_points = []
-                self._update_display()
-                print(f"已保存区域 {len(self.all_points)}")
-            
-            # 退格键删除上一个点
-            if key == 8 and self.current_points:
-                self.current_points.pop()
-                self._update_display()
-
-        # 生成最终结果
-        result_image = self._apply_masks()
-        boxes = self._calculate_boxes()
-        
-        # 清理资源
-        cv2.destroyAllWindows()
-        return result_image, boxes
-
-    def _apply_masks(self):
-        """ 应用所有遮罩 """
-        result = self.img_orig.copy()
-        for points in self.all_points:
-            mask = np.zeros_like(result[:, :, 0])
-            cv2.fillPoly(mask, [np.array(points, np.int32)], 255)
-            overlay = cv2.addWeighted(result, 1, 
-                                     cv2.bitwise_and(result, result, mask=~mask), 
-                                     1, 0)
-            result = cv2.bitwise_or(overlay, 
-                                  cv2.bitwise_and(result, result, mask=mask))
-        return result
-
-    def _calculate_boxes(self):
-        """ 计算归一化坐标 """
-        h, w = self.img_orig.shape[:2]
-        boxes = []
-        for points in self.all_points:
-            x = [p[0] for p in points]
-            y = [p[1] for p in points]
-            box = [
-                round(min(x)/w, 4),
-                round(min(y)/h, 4),
-                round(max(x)/w, 4),
-                round(max(y)/h, 4)
-            ]
-            boxes.append(box)
-        return boxes
-
-# 使用示例 ---------------------------------------------------------------------
-if __name__ == "__main__":
-    # 初始化处理器
-    masker = ImageMasker()
+            pts_display = np.array([[int(x*scale), int(y*scale)] for (x,y) in points], np.int32)
+            cv2.polylines(img_display, [pts_display], True, (0, 0, 255), 2)
     
-    # 示例图像路径
-    image_path = "image.png"  # 修改为实际路径
+    # 绘制当前正在标注的区域
+    for i, (x, y) in enumerate(current_points):
+        x_disp = int(x * scale)
+        y_disp = int(y * scale)
+        cv2.circle(img_display, (x_disp, y_disp), 5, (255, 255, 255), -1)
+        if i > 0:
+            x_prev = int(current_points[i-1][0] * scale)
+            y_prev = int(current_points[i-1][1] * scale)
+            cv2.line(img_display, (x_prev, y_prev), (x_disp, y_disp), (0, 255, 0), 2)
     
-    # 处理图像并获取结果
-    try:
-        output_image, boxes = masker.process_image(image_path)
+    cv2.imshow('image', img_display)
+
+def calculate_boxes():
+    """ 计算所有区域的归一化坐标 """
+    h, w = img_orig.shape[:2]
+    boxes = []
+    
+    for points in all_points:
+        x_coords = [p[0] for p in points]
+        y_coords = [p[1] for p in points]
+        x_min, x_max = min(x_coords), max(x_coords)
+        y_min, y_max = min(y_coords), max(y_coords)
         
-        # 保存结果
-        cv2.imwrite("output.jpg", output_image)
-        print("\n生成的归一化坐标：")
-        for i, box in enumerate(boxes):
-            print(f"Box {i+1}: {box}")
+        box = [
+            round(x_min / w, 4),
+            round(y_min / h, 4),
+            round(x_max / w, 4),
+            round(y_max / h, 4)
+        ]
+        boxes.append(box)
+    
+    return boxes
+
+def apply_masks():
+    """ 应用所有遮罩到图像 """
+    result = img_orig.copy()
+    alpha = 1  # 透明度
+    
+    for points in all_points:
+        # 创建遮罩
+        mask = np.zeros(img_orig.shape[:2], dtype=np.uint8)
+        pts = np.array(points, dtype=np.int32).reshape((-1,1,2))
+        cv2.fillPoly(mask, [pts], 255)
         
-        cv2.imshow("Final Result", output_image)
+        # 创建遮罩层
+        overlay = img_orig.copy()
+        cv2.fillPoly(overlay, [pts], (255, 255, 255))
+        masked_img = cv2.addWeighted(img_orig, 1 - alpha, overlay, alpha, 0)
+        
+        # 应用遮罩
+        result[mask == 255] = masked_img[mask == 255]
+    
+    return result
+
+def main():
+    global img_orig, scale, current_points, all_points, drawing_mode
+    
+    # 读取图像
+    #img_path = input("请输入图像路径: ").strip('"')
+    img_path = "upocr.png"
+    img_orig = cv2.imread(img_path)
+    if img_orig is None:
+        print("错误：无法加载图像")
+        return
+    
+    # 计算缩放比例
+    h, w = img_orig.shape[:2]
+    max_display_size = 800
+    scale = min(max_display_size/h, max_display_size/w)
+    display_w, display_h = int(w*scale), int(h*scale)
+    
+    # 创建窗口
+    cv2.namedWindow('image')
+    cv2.setMouseCallback('image', click_event)
+    
+    # 初始显示
+    update_display()
+    
+    # 主循环
+    while True:
+        key = cv2.waitKey(20)
+        
+        # ESC键退出
+        if key == 27:
+            break
+        
+        # 回车键完成当前区域
+        if key == 13 and len(current_points) == 4:
+            all_points.append(current_points.copy())
+            current_points.clear()
+            update_display()
+            print(f"已保存区域 {len(all_points)}，按ESC结束标注")
+        
+        # 退格键删除上一个点
+        if key == 8 and len(current_points) > 0:
+            current_points.pop()
+            update_display()
+    
+    # 处理结果
+    if len(all_points) > 0:
+        # 应用所有遮罩
+        result = apply_masks()
+        
+        # 显示并保存结果
+        cv2.imshow('Result', result)
         cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        cv2.imwrite('masked_output.jpg', result)
         
-    except Exception as e:
-        print(f"处理出错: {str(e)}")
+        # 计算并保存boxes坐标
+        boxes = calculate_boxes()
+        print("\n生成的归一化boxes坐标：")
+        print("boxes = [")
+        for box in boxes:
+            print(f"    {box},")
+        print("]")
+        
+        with open('boxes.txt', 'w') as f:
+            f.write("boxes = [\n")
+            for box in boxes:
+                f.write(f"    {box},\n")
+            f.write("]")
+    
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
