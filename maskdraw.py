@@ -1,8 +1,10 @@
 import cv2
 import numpy as np
+import os
 
 class MaskDrawer:
     def __init__(self, image_path, brush_size=20):  # [+] 初始化时添加画笔尺寸参数
+        self.image_path = image_path
         self.image = cv2.imread(image_path)
         if self.image is None:
             raise ValueError("无法读取图像")
@@ -11,6 +13,10 @@ class MaskDrawer:
         self.prev_point = None
         self.brush_size = brush_size  # [+] 画笔尺寸变量
         self.window_name = "Draw Mask (Press +/-调整粗细 | ENTER确认)"
+        
+        # 提取图像文件名(不含扩展名)
+        self.img_filename = os.path.basename(image_path)
+        self.img_name = os.path.splitext(self.img_filename)[0]
         
         cv2.namedWindow(self.window_name)
         cv2.setMouseCallback(self.window_name, self._mouse_callback)
@@ -54,13 +60,23 @@ class MaskDrawer:
             elif key == 45:  # '-'键减小画笔
                 self.brush_size = max(2, self.brush_size - 2)
         
-        # [+] 保存全白mask的二进制文件
-        cv2.imwrite("mask.png", self.mask)
+        # [+] 保存mask文件，使用原图名称
+        mask_filename = f"{self.img_name}_mask.png"
+        cv2.imwrite(mask_filename, self.mask)
+        print(f"掩码已保存为 {mask_filename}")
+        
         cv2.destroyAllWindows()
         return self.mask
 
 # 使用示例
-def interactive_remove(image_path, output_path="result.png"):
+def interactive_remove(image_path, output_path=None):
+    # 获取图片文件名(不含扩展名)
+    img_name = os.path.splitext(os.path.basename(image_path))[0]
+    
+    # 如果没有指定输出路径，则使用原图名称创建
+    if output_path is None:
+        output_path = f"{img_name}_result.png"
+    
     # [+] 初始化时设置默认画笔大小为20像素
     drawer = MaskDrawer(image_path, brush_size=20)
     mask = drawer.get_mask()
@@ -77,4 +93,5 @@ def interactive_remove(image_path, output_path="result.png"):
     return result
 
 # 使用示例
-interactive_remove("upocr.png", "output_interactive.png")
+if __name__ == "__main__":
+    interactive_remove("cola.png")

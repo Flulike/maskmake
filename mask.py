@@ -106,11 +106,16 @@ def main():
     
     # 读取图像
     #img_path = input("请输入图像路径: ").strip('"')
-    img_path = "upocr.png"
+    img_path = "beer.png"
     img_orig = cv2.imread(img_path)
     if img_orig is None:
         print("错误：无法加载图像")
         return
+    
+    # 获取图片文件名（不含路径和扩展名）
+    import os
+    img_filename = os.path.basename(img_path)
+    img_name = os.path.splitext(img_filename)[0]
     
     # 计算缩放比例
     h, w = img_orig.shape[:2]
@@ -153,7 +158,7 @@ def main():
         # 显示并保存结果
         cv2.imshow('Result', result)
         cv2.waitKey(0)
-        cv2.imwrite('masked_output.jpg', result)
+        cv2.imwrite(img_name + 'mask.png', result)
         
         # 计算并保存boxes坐标
         boxes = calculate_boxes()
@@ -163,11 +168,40 @@ def main():
             print(f"    {box},")
         print("]")
         
+        # 保存归一化坐标
         with open('boxes.txt', 'w') as f:
             f.write("boxes = [\n")
             for box in boxes:
                 f.write(f"    {box},\n")
             f.write("]")
+        
+        # 保存标准坐标到另一个文件
+        with open(img_name + '.txt', 'w') as f:
+            for i, box in enumerate(boxes):
+                # 转换归一化坐标到像素坐标
+                x_min = int(box[0] * w)
+                y_min = int(box[1] * h)
+                x_max = int(box[2] * w)
+                y_max = int(box[3] * h)
+                # 写入格式: x_min y_min x_max y_max 图片名称_GT.png
+                f.write(f"{x_min} {y_min} {x_max} {y_max} {img_name}_GT.png\n")
+        
+        # 新增：生成并保存黑白掩码图像（基于边界框的长方形掩码）
+        bw_mask = np.zeros(img_orig.shape[:2], dtype=np.uint8)  # 创建黑色背景
+        for i, box in enumerate(boxes):
+            # 转换归一化坐标到像素坐标
+            x_min = int(box[0] * w)
+            y_min = int(box[1] * h)
+            x_max = int(box[2] * w)
+            y_max = int(box[3] * h)
+            
+            # 在掩码上绘制白色矩形（标注区域）
+            cv2.rectangle(bw_mask, (x_min, y_min), (x_max, y_max), 255, -1)  # -1表示填充
+        
+        # 保存黑白掩码
+        bw_mask_filename = f"{img_name}_bw_mask.png"
+        cv2.imwrite(bw_mask_filename, bw_mask)
+        print(f"黑白掩码已保存为 {bw_mask_filename}")
     
     cv2.destroyAllWindows()
 
